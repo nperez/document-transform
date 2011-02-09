@@ -13,7 +13,7 @@ use Document::Transform::Transformer;
 use Document::Transform::Types(':all');
 use Moose::Util::TypeConstraints('match_on_type');
 
-=atribute_public backend
+=attribute_public backend
 
     is: ro, does: L<Document::Transform::Role::Backend>, required: 1
 
@@ -221,7 +221,10 @@ __END__
     use Document::Transform::Backend::MongoDB;
 
     my $backend = Document::Transform::Backend::MongoDB->new(
-        host => $ENV{MONGOD} );
+        host => $ENV{MONGOD}
+        database_name => 'foo',
+        transform_collection => 'transforms',
+        document_collection => 'documents');
 
     my $transform = Document::Transform->new(backend => $backend);
     

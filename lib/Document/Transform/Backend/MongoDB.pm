@@ -307,3 +307,19 @@ with 'Document::Transform::Role::Backend';
 __PACKAGE__->meta->make_immutable();
 1;
 __END__
+
+=head1 SYNOPSIS
+
+    use Document::Transform::Backend::MongoDB;
+
+    my $backend = Document::Transform::Backend::MongoDB->new(
+        host => $ENV{MONGOD}
+        database_name => 'foo',
+        transform_collection => 'transforms',
+        document_collection => 'documents');
+
+    my $doc = $backend->fetch_document('SOME_DOCUMENT');
+
+=head1 DESCRIPTION
+
+So you need Document::Transform to talk MongoDB. You're in luck, bucko, because this module is your godsend. And it comes by default! Now, there are a couple of different ways to instantiate this and different levels of attributes that can be filled. You can plug in the collections, you can plug in collection names and a database instance, you can plug in collection names, a database name, and connection instance. And if you don't have any instances then some connection info, database name, and collection names are all you need! So it is like you pick your level of support when calling into a PBS telethon.  

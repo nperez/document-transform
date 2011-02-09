@@ -5,28 +5,28 @@ package Document::Transform::Role::Backend;
 use Moose::Role;
 use namespace::autoclean;
 
-=role_requires fetch_transform
+=role_require fetch_transform
 
 This method must accept a string key and should return a
 L<Document::Transform::Types/Transform>
 
 =cut
 
-=role_requires fetch_document
+=role_require fetch_document
 
 This method must accept a string key and should return a
 L<Document::Transform::Types/Document>
 
 =cut
 
-=role_requires store_transform
+=role_require store_transform
 
 This method should accept a L<Document::Transform::Types/Transform> and store it
 in the backend.
 
 =cut
 
-=role_requires store_document
+=role_require store_document
 
 This method should accept a L<Document::Transform::Types/Document> and store it
 in the backend.
