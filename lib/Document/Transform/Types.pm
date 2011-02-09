@@ -31,7 +31,6 @@ subtype Document,
     where
     {
         exists($_->{document_id}) && not exists($_->{transform_id})
-            && exists($_->{_id}) && class_type('MongoDB::OID')->check($_->{ID})
     };
 
 =type Transform
@@ -45,13 +44,13 @@ and value defined.
 =cut
 
 subtype Transform,
-    as Dict
-    [
-        document_id => Str, 
-        transform_id => Str,
-        operations => ArrayRef[Dict[path => Str, value => Defined]],
-        _id => class_type 'MongoDB::OID',
-    ];
+    as HashRef,
+    where
+    {
+        exists($_->{document_id}) && exists($_->{transform_id}) &&
+        exists($_->{operations}) &&
+        (ArrayRef[Dict[path => Str, value => Defined]])->check($_->{operations});
+    };
 
 =type DocumentOrTransform
 

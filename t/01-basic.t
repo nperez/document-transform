@@ -44,7 +44,7 @@ my $backend = Document::Transform::Backend::MongoDB->new
     host => $HOST,
     database_name => 'DocumentTransformTest',
     document_collection => 'documents',
-    transforms_collection => 'transforms'
+    transform_collection => 'transforms'
 );
 
 isa_ok($backend, 'Document::Transform::Backend::MongoDB', 'Backend is the right class');
@@ -87,7 +87,7 @@ my $altered_check =
     _id => $altered->{_id},
     document_id => 'QWERTY1',
     foo => 'BAR',
-    yarg => [ 'ONE', 'two', 'three'],
+    yarg => [ 'ONE1', 'two', 'three'],
     blarg => 'sock puppets rock',
     qwak => { farg => { yarp => 1, narp => 0 } }    
 };

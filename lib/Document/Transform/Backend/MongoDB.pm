@@ -260,6 +260,20 @@ should take place.
 
 sub store_document
 {
+    my ($self, $item, $safe) = pos_validated_list
+    (
+        \@_,
+        {isa => __PACKAGE__},
+        {isa => Document},
+        {isa => Bool, optional => 1}
+    );
+
+    unless(exists($item->{_id}))
+    {
+        $self->documents->insert($item, ($safe ? {safe => 1} : ()) );
+    }
+
+    $self->documents->update({_id => $item->{_id}}, $item, ($safe ? {safe => 1} : ()));
 }
 
 =method_public store_transform
@@ -273,6 +287,20 @@ should take place.
 
 sub store_transform
 {
+    my ($self, $item, $safe) = pos_validated_list
+    (
+        \@_,
+        {isa => __PACKAGE__},
+        {isa => Transform},
+        {isa => Bool, optional => 1}
+    );
+
+    unless(exists($item->{_id}))
+    {
+        $self->transforms->insert($item, ($safe ? {safe => 1} : ()) );
+    }
+
+    $self->transforms->update({_id => $item->{_id}}, $item, ($safe ? {safe => 1} : ()));
 }
 
 with 'Document::Transform::Role::Backend';
