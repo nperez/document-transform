@@ -1,10 +1,22 @@
 package Document::Transform::Transformer;
+
+#ABSTRACT: A document transformer. More than meets the eye. Or not.
+
 use Moose;
 use namespace::autoclean;
 
 use Data::DPath('dpathr');
 use Document::Transform::Types(':all');
 use MooseX::Params::Validate;
+
+=method_public transform
+
+    (Document, Transform)
+
+transform takes a Document and a Transform and performs the operations contained
+with the transform against the document. Returns the transformed document.
+
+=cut
 
 sub transform
 {
@@ -61,4 +73,22 @@ with 'Document::Transform::Role::Transformer';
 __PACKAGE__->meta->make_immutable();
 1;
 
-__END__;
+__END__
+
+=head1 SYNOPSIS
+
+    use Document::Transform::Transformer;
+
+    my $transformer = Document::Transform::Transformer->new();
+    my $altered = $transformer->transform($document, $transform);
+
+=head1 DESCRIPTION
+
+Need a simple transformer that mashes up a transform and a document into
+something awesome? This is your module then. 
+
+This is the default for Document::Transformer to use. It expects data structures
+that conform to the types defined in the L<Document::Transform::Types> module.
+It implements the interface role L<Document::Transform::Role::Transformer>
+
+
