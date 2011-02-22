@@ -4,7 +4,6 @@ use strict;
 
 BEGIN
 {
-    use_ok('Document::Transform::Types');
     use_ok('Document::Transform');
     use_ok('Document::Transform::Role::Backend');
     use_ok('Document::Transform::Role::Transformer');

@@ -10,12 +10,12 @@ use Throwable::Error;
 use MooseX::Params::Validate;
 use MooseX::Types::Moose(':all');
 use Document::Transform::Transformer;
-use Document::Transform::Types(':all');
 use Moose::Util::TypeConstraints('match_on_type');
+use Devel::PartialDump('dump');
 
 =attribute_public backend
 
-    is: ro, does: L<Document::Transform::Role::Backend>, required: 1
+    is: ro, does: Document::Transform::Role::Backend, required: 1
 
 The backend attribute is required for instantiation of the Document::Transform
 object. The backend object is what talks to whichever NoSQL resource to fetch
@@ -28,7 +28,7 @@ role L<Document::Transform::Role::Backend> and implement the required methods.
 
 has backend =>
 (
-    is => 'ro', 
+    is => 'ro',
     does => 'Document::Transform::Role::Backend',
     required => 1,
     handles => 'Document::Transform::Role::Backend',
@@ -37,11 +37,12 @@ has backend =>
 =attribute_public transformer
 
     is: ro, does: L<Document::Transform::Role::Transformer>
+    builder: '_build_transformer', lazy: 1
 
 The transformer is the object to which transformation responsibilities are
 delegated. By default, the L<Document::Transform::Transformer> class is
 instantiated when none is provided. Please see its documentation on the
-expectations of document and transform formats. 
+expectations of document and transform formats.
 
 If you would like to implement your own transformer (to support your own
 document and transform formats), simply consume the interface role
@@ -53,9 +54,18 @@ has transformer =>
 (
     is => 'ro',
     does => 'Document::Transform::Role::Transformer',
-    default => sub { Document::Transform::Transformer->new() },
-    handles => 'Document::Transform::Role::Transformer',
+    handles => ['transform'],
+    builder => '_build_transformer',
 );
+
+sub _build_transformer
+{
+    my ($self) = @_;
+    return Document::Transform::Transformer->new(
+        document_constraint => $self->document_constraint,
+        transform_constraint => $self->transform_constraint,
+    );
+}
 
 =attribute_public post_fetch_callback
 
@@ -65,7 +75,7 @@ post_fetch_callback simply provides a way to do additional processing after
 the document has been fetched and transform executed. One good use for this is
 if validation of the result needs to take place. This coderef is called naked
 with a single argument, the final document. Throw an exception if execution
-should stop.
+should stop. The return value is discarded.
 
 =cut
 
@@ -79,17 +89,21 @@ has post_fetch_callback =>
 
 =method_public fetch
 
-    (Str)
+    (Define)
 
 fetch performs a transform lookup using the provided key argument, then a
-document lookup based information inside the transform. Once it has both pieces,
-it passes them on to the transformer via the transform method. The result is
-then passed to the callback L</post_fetch_callback> before finally being
-returned.
+document lookup based information inside the transform(which can recurse as
+transforms can reference other transforms until a document is reached). Once it
+has both pieces (all of the transforms and the document), it passes them on to
+the transformer via the transform method. The result is then passed to the
+callback L</post_fetch_callback> before finally being returned.
 
 If for whatever reason there isn't a transform with that key, but there is a
 document with that key, the document will be fetched and not transformed. It is
 still subject to the L</post_fetch_callback> though.
+
+In list context, the transformed document along with the transforms executed
+are returned. Otherwise, just the transformed document is returned.
 
 =cut
 
@@ -99,77 +113,115 @@ sub fetch
     (
         \@_,
         {isa => __PACKAGE__},
-        {isa => Str}
+        {isa => Defined}
     );
-    
-    my $ret;
 
-    my $transform = $self->fetch_transform($key);
+    my $transform = $self->fetch_transform_from_key($key);
     unless(defined($transform))
     {
-        my $document = $self->fetch_document($key);
+        my $document = $self->fetch_document_from_key($key);
         unless(defined($document))
         {
             Throwable::Error->throw
             ({
-                message => 'Unable to fetch anything useful with: '.$key
+                message => 'Unable to fetch anything useful with: '.dump($key)
             });
         }
-        $ret = $document;
+        if($self->has_post_fetch_callback)
+        {
+            $self->post_fetch_callback->($document);
+        }
+
+        return $document;
     }
     else
     {
-        my $document = $self->fetch_document($transform->{document_id});
-        unless(defined($document))
+        my @transforms = ($transform);
+        my $doc;
+
+        do
         {
-            Throwable::Error->throw
-            ({
-                message => 'Unable to fetch a document referenced by this:' .
-                    $transform->{document_id}
-            });
+            $doc = $self->fetch_document_from_transform($transform);
+            if($self->transform_constraint->check($doc))
+            {
+                my @check = map
+                {
+                    $self->is_same_transform($_, $doc)
+                        ? $_
+                        : ()
+                }
+                @transforms;
+
+                if(scalar(@check))
+                {
+                    Throwable::Error->throw
+                    ({
+                        message => 'Circular references detected while'.
+                        'traversing transform references starting with: '.
+                        dump($transform)
+                    });
+                }
+                push(@transforms, $doc);
+                $transform = $doc;
+            }
         }
-        my $final = $self->transform($document, $transform);
+        while($self->transform_constraint->check($doc));
+
+        @transforms = reverse @transforms;
+        # bottom most transform should be executed first
+        my $final = $self->transform($doc, \@transforms);
 
         if($self->has_post_fetch_callback)
         {
             $self->post_fetch_callback->($final);
         }
 
-        $ret = $final;
+        if(wantarray)
+        {
+            return ($final, @transforms);
+        }
+        else
+        {
+            return $final;
+        }
     }
-
-    return $ret;
 }
 
 =method_public store
 
-    (DocumentOrTransform)
+    (Backend constrained document or transform)
 
-store takes a single item as an argument and depending on the
-DocumentOrTransform it will execute the appropriate store method on the
-backend.
+store takes a single item as an argument and depending on the the type
+constraints from the backend it will execute the appropriate store method on
+the backend. See L<Document::Transform::Role::Backend/document_constraint> and
+L<Document::Transform::Role::Backend/transform_constraint> for more information
 
 =cut
 
 sub store
 {
-    my ($self, $item) = pos_validated_list
+    my $self = shift;
+    my ($item) = pos_validated_list
     (
         \@_,
-        {isa => __PACKAGE__},
-        {isa => DocumentOrTransform}
+        {isa =>
+            Moose::Util::TypeConstraints::create_type_constraint_union(
+                $self->document_constraint,
+                $self->transform_constraint
+            )
+        }
     );
 
     match_on_type $item =>
     (
-        Document => sub { $self->store_document($item) },
-        Transform => sub { $self->store_transform($item) },
+        $self->document_constraint => sub { $self->store_document($item) },
+        $self->transform_constraint => sub { $self->store_transform($item) },
     );
 }
 
 =method_public check_fetch_document
 
-    (Str)
+    (Defined)
 
 A document fetch is attempted with the provided argument. If successful, it
 returns true.
@@ -182,15 +234,15 @@ sub check_fetch_document
     (
         \@_,
         {isa => __PACKAGE__},
-        {isa => Str}
+        {isa => Defined}
     );
 
-    return defined($self->fetch_document($key));
+    return $self->has_document($key);
 }
 
 =method_public check_fetch_transform
 
-    (Str)
+    (Defined)
 
 A transform fetch is attempted with the provided argument. If successful, it
 returns true.
@@ -203,10 +255,10 @@ sub check_fetch_transform
     (
         \@_,
         {isa => __PACKAGE__},
-        {isa => Str}
+        {isa => Defined}
     );
 
-    return defined($self->fetch_transform($key));
+    return $self->has_transform($key);
 }
 
 __PACKAGE__->meta->make_immutable();
@@ -227,12 +279,13 @@ __END__
         document_collection => 'documents');
 
     my $transform = Document::Transform->new(backend => $backend);
-    
+
     my $result;
 
     try
     {
-        $result = $transform->fetch('SOME_DOCUMENT');
+        $result = $transform->fetch(
+            MongoDB::OID->new(value => 'SOME_DOCUMENT'));
     }
     catch
     {
@@ -310,7 +363,17 @@ your own transformer. Simply consume the interface role
 L<Document::Transform::Role::Transformer> and implement the transform method and
 pass in an instance and you are set.
 
+Something else this module does is allow you to have transforms reference other
+transforms that reference other transforms, and so on until it reaches a source
+document. Please be careful that the transforms dont ultimately make a giant
+circular linked list that will never resolve to a document. There are checks in
+place to throw an exception if a transform has already been seen when
+attempting to get a document, but the checks are naive and only look at the
+L<Document::Transform::Role::Backend/transform_id_key>. If this key is not
+unique in your NoSQL store, then you are screwed. You've been warned.
+
 This module ships with one backend and one transformer implemented but you
 aren't married to either if you don't like MongoDB or think the transformer
 semantics are subpar. This module and its packages are all very L<Bread::Board>
-friendly. 
+friendly.
+

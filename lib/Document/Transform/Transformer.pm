@@ -6,62 +6,96 @@ use Moose;
 use namespace::autoclean;
 
 use Data::DPath('dpathr');
-use Document::Transform::Types(':all');
+use MooseX::Types::Moose(':all');
 use MooseX::Params::Validate;
+
+=attribute_public document_constraint
+
+    is: ro, isa: Moose::Meta::TypeConstraint, required: 1
+
+The default Transformer must have the constraints supplied to it via
+constructor. This constraint should check for whatever is a valid Document for
+the backend.
+
+=cut
+
+=attribute_public transform_constraint
+
+    is: ro, isa: Moose::Meta::TypeConstraint, required: 1
+
+The default Transformer must have the constraints supplied to it via
+constructor. This constraint should check for whatever is a valid Transform for
+the backend.
+
+=cut
+
+has $_.'_constraint' =>
+(
+    is => 'ro',
+    isa => 'Moose::Meta::TypeConstraint',
+    required => 1,
+) for qw/document transform/;
 
 =method_public transform
 
-    (Document, Transform)
+    (Document, ArrayRef[Transform])
 
-transform takes a Document and a Transform and performs the operations contained
-with the transform against the document. Returns the transformed document.
+transform takes a Document and an array of Transforms and performs the
+operations contained with the transforms against the document. Returns the
+transformed document.
+
+The type constraints for Document and Transform are stored in the attributes
+L</document_constraint> and L</transform_constraint>, respectively.
 
 =cut
 
 sub transform
 {
-    my ($self, $document, $transform) = pos_validated_list
+    my $self = shift;
+    my ($document, $transforms) = pos_validated_list
     (
         \@_,
-        {isa => __PACKAGE__},
-        {isa => Document},
-        {isa => Transform},
+        {isa => $self->document_constraint},
+        {isa => ArrayRef[$self->transform_constraint]},
     );
-    
-    foreach my $operation (@{$transform->{operations}})
+
+    foreach my $transform(@$transforms)
     {
-        my @refs = dpathr($operation->{path})->match($document);
-        unless(scalar(@refs))
+        foreach my $operation (@{$transform->{operations}})
         {
-            if($transform->{document_id} =~ m#\[|\]|\.|\*|\"|//#)
+            my @refs = dpathr($operation->{path})->match($document);
+            unless(scalar(@refs))
             {
-                Throwable::Error->throw
-                ({
-                    message => 'transform path not found and the path is too '.
-                        'complex for simple structure building'
-                });
-            }
-            else
-            {
-                my @paths = split('/', $operation->{path});
-                my $place = $document;
-                for(0..$#paths)
+                if($operation->{path} =~ m#\[|\]|\.|\*|\"|//#)
                 {
-                    next if $paths[$_] eq '';
-                    if($_ == $#paths)
+                    Throwable::Error->throw
+                    ({
+                        message => 'transform path not found and the path is '.
+                            'too complex for simple structure building'
+                    });
+                }
+                else
+                {
+                    my @paths = split('/', $operation->{path});
+                    my $place = $document;
+                    for(0..$#paths)
                     {
-                        $place->{$paths[$_]} = $operation->{value};
-                    }
-                    else
-                    {
-                        $place = \%{$place->{$paths[$_]} = {}};
+                        next if $paths[$_] eq '';
+                        if($_ == $#paths)
+                        {
+                            $place->{$paths[$_]} = $operation->{value};
+                        }
+                        else
+                        {
+                            $place = \%{$place->{$paths[$_]} = {}};
+                        }
                     }
                 }
             }
-        }
-        else
-        {
-            map { $$_ = $operation->{value}; } @refs;
+            else
+            {
+                map { $$_ = $operation->{value}; } @refs;
+            }
         }
     }
 
@@ -78,17 +112,23 @@ __END__
 =head1 SYNOPSIS
 
     use Document::Transform::Transformer;
+    use MyTypeLib(':all');
 
-    my $transformer = Document::Transform::Transformer->new();
-    my $altered = $transformer->transform($document, $transform);
+    my $transformer = Document::Transform::Transformer->new
+    (
+        document_constraint => Document,
+        transform_constraint => Transform,
+    );
+    my $altered = $transformer->transform($document, $transforms);
 
 =head1 DESCRIPTION
 
 Need a simple transformer that mashes up a transform and a document into
-something awesome? This is your module then. 
+something awesome? This is your module then.
 
-This is the default for Document::Transformer to use. It expects data structures
-that conform to the types defined in the L<Document::Transform::Types> module.
-It implements the interface role L<Document::Transform::Role::Transformer>
+This is the default for Document::Transformer to use. It expects data
+structures that align with whatever type constraints are passed into the
+constructor that represent a Document and a Transform. It implements the
+interface role L<Document::Transform::Role::Transformer>
 
 

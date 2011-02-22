@@ -6,10 +6,78 @@ use Moose;
 use namespace::autoclean;
 
 use MongoDB;
+use MongoDBx::AutoDeref;
 use Throwable::Error;
 use MooseX::Params::Validate;
 use MooseX::Types::Moose(':all');
-use Document::Transform::Types(':all');
+use MooseX::Types::Structured(':all');
+use Moose::Util::TypeConstraints();
+
+=attribute_public document_constraint
+
+    is: ro, isa: Moose::Meta::TypeConstraint
+    builder: _build_document_constraint, lazy: 1
+
+This attribute implements
+L<Document::Transform::Role::Backend/document_constraint> and provides a
+meaningful type constraint built using L</document_id_key> in the where clause
+to check for the appropriate keys in the data structure that represents a
+document.
+
+=cut
+
+=attribute_public transform_constraint
+
+    is: ro, isa: Moose::Meta::TypeConstraint
+    builder: _build_transform_constraint, lazy: 1
+
+This attribute implements
+L<Document::Transform::Role::Backend/transform_constraint> and provides a
+meaningful type constraint built using L</transform_id_key> in the where clause
+to check for the appropriate keys in the data structure that represents a
+transform.
+
+=cut
+
+has $_.'_constraint' =>
+(
+    is => 'ro',
+    isa => 'Moose::Meta::TypeConstraint',
+    builder => '_build_'.$_.'_constraint',
+    lazy => 1,
+) for qw/document transform/;
+
+sub _build_document_constraint
+{
+    my ($self) = @_;
+
+    return Moose::Util::TypeConstraints::subtype
+    ({
+        as => HashRef,
+        where => sub
+        {
+            exists($_->{$self->document_id_key}) &&
+            not exists($_->{$self->reference_id_key})
+        },
+    });
+}
+
+sub _build_transform_constraint
+{
+    my ($self) = @_;
+
+    return Moose::Util::TypeConstraints::subtype
+    ({
+        as => HashRef,
+        where => sub
+        {
+            exists($_->{$self->transform_id_key}) &&
+            exists($_->{$self->reference_id_key}) &&
+            exists($_->{operations}) &&
+            (ArrayRef[Dict[path => Str, value => Defined]])->check($_->{operations});
+        },
+    });
+}
 
 =attribute_public host
 
@@ -37,7 +105,7 @@ it is accessed, a connection will be constructed using the L</host> attribute.
 
 has connection =>
 (
-    is => 'ro', 
+    is => 'ro',
     isa => 'MongoDB::Connection',
     default => sub
     {
@@ -98,7 +166,7 @@ has database =>
                     'db constructor'
             });
         }
-        return $self->connection->${\$self->database_name};
+        return $self->connection->get_database($self->database_name);
     },
     lazy => 1,
 );
@@ -147,7 +215,7 @@ has documents =>
             });
         }
 
-        return $self->database->${\$self->document_collection};
+        return $self->database->get_collection($self->document_collection);
     },
     lazy => 1,
 );
@@ -196,58 +264,89 @@ has transforms =>
             });
         }
 
-        return $self->database->${\$self->transform_collection};
+        return $self->database->get_collection($self->transform_collection);
     },
     lazy => 1,
 );
 
-=method_public fetch_document
+=method_public fetch_document_from_key
 
-    (Str)
+    (Defined)
 
-This method implements the L<Docoument::Transform::Role::Backend/fetch_document>
-method. It takes a single string key that should match a document within the
-documents collection with the right document_id attribute. See the
-L<Document::Transform/SYNOPSIS> for a description of the expected document
-format.
+This method implements the
+L<Docoument::Transform::Role::Backend/fetch_document_from_key> method. It takes
+a single key that should match a document within the documents collection with
+the right L</document_id_key> attribute.
 
 =cut
 
-sub fetch_document
+sub fetch_document_from_key
 {
     my ($self, $key) = pos_validated_list
     (
         \@_,
         {isa => __PACKAGE__},
-        {isa => Str},
+        {isa => Defined},
     );
 
-    return $self->documents->find_one({document_id => $key});
+    return $self->documents->find_one({$self->document_id_key => $key});
 }
 
-=method_public fetch_transform
+=method_public fetch_transform_from_key
 
-    (Str)
+    (Defined)
 
-This method implements the L<Docoument::Transform::Role::Backend/fetch_transform>
-method. It takes a single string key that should match a transform within the
-transforms collection with the right transform_id attribute. See the
-L<Document::Transform/SYNOPSIS> for a description of the expected transform
-format.
+This method implements the
+L<Docoument::Transform::Role::Backend/fetch_transform_from_key> method. It
+takes a single key that should match a transform within the transforms
+collection with the right L</transform_id_key> attribute.
 
 =cut
 
-sub fetch_transform
+sub fetch_transform_from_key
 {
     my ($self, $key) = pos_validated_list
     (
         \@_,
         {isa => __PACKAGE__},
-        {isa => Str},
+        {isa => Defined},
     );
 
-    return $self->transforms->find_one({transform_id => $key});
+    my $val =  $self->transforms->find_one({$self->transform_id_key => $key});
+    return $val;
 }
+
+=method_public fetch_document_from_transform
+
+    (Transform)
+
+This method implements the
+L<Docoument::Transform::Role::Backend/fetch_document_from_transform> method. It
+takes a Transform defined by L</transform_constraint> that has DBRef to a document
+stored with in the L</reference_id_key> attribute of the transform.
+
+=cut
+
+sub fetch_document_from_transform
+{
+    my $self = shift;
+    my ($transform) = pos_validated_list
+    (
+        \@_,
+        {isa => $self->transform_constraint},
+    );
+    return $transform->{$self->reference_id_key}->fetch();
+}
+
+
+=method_public fetch_transform_from_document
+
+This method is a no-op implementation of
+L<Docoument::Transform::Role::Backend/fetch_transform_from_document>. 
+
+=cut
+
+sub fetch_transform_from_document { }
 
 =method_public store_document
 
@@ -256,15 +355,18 @@ method with one key notable option. In addition to the document to store, a
 second boolean value can be passed to denote whether a "safe" insert/update
 should take place.
 
+This method makes use of L</document_id_key> to perform an update of the
+document.
+
 =cut
 
 sub store_document
 {
-    my ($self, $item, $safe) = pos_validated_list
+    my $self = shift;
+    my ($item, $safe) = pos_validated_list
     (
         \@_,
-        {isa => __PACKAGE__},
-        {isa => Document},
+        {isa => $self->document_constraint},
         {isa => Bool, optional => 1}
     );
 
@@ -273,7 +375,10 @@ sub store_document
         $self->documents->insert($item, ($safe ? {safe => 1} : ()) );
     }
 
-    $self->documents->update({_id => $item->{_id}}, $item, ($safe ? {safe => 1} : ()));
+    $self->documents->update(
+        {$self->document_id_key => $item->{$self->document_id_key}},
+        $item, ($safe ? {safe => 1} : ())
+    );
 }
 
 =method_public store_transform
@@ -283,15 +388,18 @@ method with one key notable option. In addition to the transform to store, a
 second boolean value can be passed to denote whether a "safe" insert/update
 should take place.
 
+This method makes use of L</transform_id_key> to perform an update of the
+transform.
+
 =cut
 
 sub store_transform
 {
-    my ($self, $item, $safe) = pos_validated_list
+    my $self = shift;
+    my ($item, $safe) = pos_validated_list
     (
         \@_,
-        {isa => __PACKAGE__},
-        {isa => Transform},
+        {isa => $self->transform_constraint},
         {isa => Bool, optional => 1}
     );
 
@@ -300,10 +408,139 @@ sub store_transform
         $self->transforms->insert($item, ($safe ? {safe => 1} : ()) );
     }
 
-    $self->transforms->update({_id => $item->{_id}}, $item, ($safe ? {safe => 1} : ()));
+    $self->transforms->update(
+        {$self->transform_id_key => $item->{$self->transform_id_key}},
+        $item, ($safe ? {safe => 1} : ())
+    );
+}
+
+=method has_document
+
+    (Defined)
+
+This method implements L<Document::Transform::Role::Backend/has_document>.
+Simply provide a key and it will check Mongo if such a document exists using
+L</document_id_key>
+
+=cut
+
+sub has_document
+{
+    my ($self, $key) = pos_validated_list
+    (
+        \@_,
+        {isa => __PACKAGE__},
+        {isa => Defined},
+    );
+
+    return defined($self->documents->find_one({$self->document_id_key => $key}));
+}
+
+=method has_transform
+
+    (Defined)
+
+This method implements L<Document::Transform::Role::Backend/has_transform>.
+Simply provide a key and it will check Mongo if such a transform exists using
+L</transform_id_key>
+
+=cut
+
+sub has_transform
+{
+    my ($self, $key) = pos_validated_list
+    (
+        \@_,
+        {isa => __PACKAGE__},
+        {isa => Defined},
+    );
+
+    return defined($self->transforms->find_one({$self->transform_id_key => $key}));
+}
+
+=method is_same_document
+
+    (Document, Document)
+
+This method implements L<Document::Transform::Role::Backend/is_same_document>.
+It does a string comparison between the two documents values stored in
+L</document_id_key>. If using the default '_id' value for L</document_id_key>,
+this will stringify the MongoDB::OID objects down to their hex key and compare
+them. 
+
+=cut
+
+sub is_same_document
+{
+    my $self = shift;
+    my ($doc1, $doc2) = validated_list
+    (
+        \@_,
+        {isa => $self->document_constraint},
+        {isa => $self->document_constraint},
+    );
+
+    return $doc1->{$self->document_id_key} eq $doc2->{$self->document_id_key};
+}
+
+=method is_same_transform
+
+    (Transform, Transform)
+
+This method implements L<Transform::Transform::Role::Backend/is_same_transform>.
+It does a string comparison between the two transforms values stored in
+L</transform_id_key>. If using the default '_id' value for L</transform_id_key>,
+this will stringify the MongoDB::OID objects down to their hex key and compare
+them. 
+
+=cut
+
+sub is_same_transform
+{
+    my $self = shift;
+    my ($tra1, $tra2) = pos_validated_list
+    (
+        \@_,
+        {isa => $self->transform_constraint},
+        {isa => $self->transform_constraint},
+    );
+
+    return $tra1->{$self->transform_id_key} eq $tra2->{$self->transform_id_key};
 }
 
 with 'Document::Transform::Role::Backend';
+
+=attribute_public document_id_key
+
+    is: ro, isa: Str,
+    default: '_id',
+
+=cut
+
+=attribute_public transform_id_key
+
+    is: ro, isa: Str,
+    +default: '_id',
+
+=cut
+
+=attribute_public reference_id_key
+
+    is: ro, isa: Str,
+    +default: 'source',
+
+This attribute holds the key used in the transform to reference the document to
+which this transform should occur.
+
+=cut
+
+has '+'.$_.'_id_key' =>
+(
+    default => '_id'
+) for qw/document transform/;
+
+has '+reference_id_key' => ( default => 'source' );
+
 __PACKAGE__->meta->make_immutable();
 1;
 __END__
@@ -318,8 +555,10 @@ __END__
         transform_collection => 'transforms',
         document_collection => 'documents');
 
-    my $doc = $backend->fetch_document('SOME_DOCUMENT');
+    my $doc = $backend->fetch_document_from_key(
+        MongoDB::OID->new(value => 'deadbeef'));
 
 =head1 DESCRIPTION
 
-So you need Document::Transform to talk MongoDB. You're in luck, bucko, because this module is your godsend. And it comes by default! Now, there are a couple of different ways to instantiate this and different levels of attributes that can be filled. You can plug in the collections, you can plug in collection names and a database instance, you can plug in collection names, a database name, and connection instance. And if you don't have any instances then some connection info, database name, and collection names are all you need! So it is like you pick your level of support when calling into a PBS telethon.  
+So you need Document::Transform to talk MongoDB. You're in luck, bucko, because this module is your godsend. And it comes by default! Now, there are a couple of different ways to instantiate this and different levels of attributes that can be filled. You can plug in the collections, you can plug in collection names and a database instance, you can plug in collection names, a database name, and connection instance. And if you don't have any instances then some connection info, database name, and collection names are all you need! So it is like you pick your level of support when calling into a PBS telethon.
+
