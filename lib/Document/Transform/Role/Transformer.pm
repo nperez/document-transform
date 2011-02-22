@@ -17,14 +17,14 @@ L</transform_constrant> attributes or methods
 
 =cut
 
-=role_requires document_constraint
+=role_require document_constraint
 
 In order to constrain the Document appropriately, this attribute or method must
 be implemented and must return a L<Moose::Meta::TypeConstraint>.
 
 =cut
 
-=role_requires transform_constraint
+=role_require transform_constraint
 
 In order to constrain the Transform appropriately, this attribute or method
 must be implemented and must return a L<Moose::Meta::TypeConstraint>.

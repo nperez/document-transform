@@ -414,7 +414,7 @@ sub store_transform
     );
 }
 
-=method has_document
+=method_public has_document
 
     (Defined)
 
@@ -436,7 +436,7 @@ sub has_document
     return defined($self->documents->find_one({$self->document_id_key => $key}));
 }
 
-=method has_transform
+=method_public has_transform
 
     (Defined)
 
@@ -458,7 +458,7 @@ sub has_transform
     return defined($self->transforms->find_one({$self->transform_id_key => $key}));
 }
 
-=method is_same_document
+=method_public is_same_document
 
     (Document, Document)
 
@@ -483,7 +483,7 @@ sub is_same_document
     return $doc1->{$self->document_id_key} eq $doc2->{$self->document_id_key};
 }
 
-=method is_same_transform
+=method_public is_same_transform
 
     (Transform, Transform)
 

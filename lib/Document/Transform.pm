@@ -89,7 +89,7 @@ has post_fetch_callback =>
 
 =method_public fetch
 
-    (Define)
+    (Defined)
 
 fetch performs a transform lookup using the provided key argument, then a
 document lookup based information inside the transform(which can recurse as
